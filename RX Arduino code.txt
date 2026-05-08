@@ -1,0 +1,109 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ================= LCD =================
+LiquidCrystal_I2C lcd(0x27,16,2);
+
+// ================= PIN =================
+#define SOLAR_PIN A0
+
+// ================= VLC SETTINGS =================
+#define BIT_DELAY 8
+
+// ================= VARIABLES =================
+char lastStable = 0;
+char lastRead = 0;
+int sameCount = 0;
+
+// ================= SETUP =================
+void setup() {
+
+  lcd.init();
+  lcd.backlight();
+  Serial.begin(9600);
+
+  lcd.setCursor(0,0);
+  lcd.print("VLC RX READY");
+}
+
+// ================= LOOP =================
+void loop() {
+
+  char c = receiveVLC();
+
+  if(c != 0) {
+
+    // -------- STABILITY FILTER --------
+    if(c == lastRead) {
+      sameCount++;
+    } else {
+      sameCount = 0;
+    }
+
+    lastRead = c;
+
+    if(sameCount >= 2 && c != lastStable) {
+
+      lastStable = c;
+
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("RX MESSAGE:");
+      lcd.setCursor(0,1);
+      showMessage(c);
+
+      Serial.print("Received: ");
+      Serial.println(c);
+    }
+  }
+}
+
+// ================= VLC RECEIVE =================
+char receiveVLC() {
+
+  // -------- AUTO THRESHOLD --------
+  int base = 0;
+  for(int i=0;i<5;i++){
+    base += analogRead(SOLAR_PIN);
+    delay(2);
+  }
+  base /= 5;
+
+  int threshold = base + 15;   // tuned for your fast TX
+
+  // -------- WAIT FOR START --------
+  while(analogRead(SOLAR_PIN) < threshold);
+
+  delay(BIT_DELAY + 2);  // align
+
+  char data = 0;
+
+  // -------- READ 8 BITS --------
+  for(int i=0;i<8;i++){
+
+    int val = analogRead(SOLAR_PIN);
+
+    if(val > threshold) {
+      data |= (1 << i);
+    }
+
+    delay(BIT_DELAY);
+  }
+
+  // -------- VALID FILTER --------
+  if(data == 'S' || data == 'W' || data == 'E' || data == 'L' || data == 'R') {
+    return data;
+  }
+
+  return 0;
+}
+
+// ================= LCD DISPLAY =================
+void showMessage(char c) {
+
+  if(c=='S') lcd.print("SAFE       ");
+  else if(c=='W') lcd.print("WARNING    ");
+  else if(c=='E') lcd.print("EMERGENCY  ");
+  else if(c=='L') lcd.print("LEFT       ");
+  else if(c=='R') lcd.print("RIGHT      ");
+}

@@ -1,0 +1,207 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ================= LCD =================
+LiquidCrystal_I2C lcd(0x27,16,2);
+
+// ================= PINS =================
+#define LASER_PIN 2
+
+#define ENA 3
+#define ENB 9
+
+#define IN1 8
+#define IN2 10
+#define IN3 7     // CHANGED
+#define IN4 13    // CHANGED
+
+#define TRIG 11
+#define ECHO 12   // SAFE (no conflict now)
+
+#define BTN_LEFT 4
+#define BTN_RIGHT 5
+#define BTN_EMERGENCY 6
+
+// ================= VLC TIMING =================
+#define BIT_DELAY 12   // Increased for stability
+
+// ================= VARIABLES =================
+long duration;
+int distance;
+int motorSpeed = 0;
+
+char txMsg = 'S';
+char aiCommand = 0;
+
+// ================= SETUP =================
+void setup() {
+
+  pinMode(LASER_PIN,OUTPUT);
+
+  pinMode(IN1,OUTPUT);
+  pinMode(IN2,OUTPUT);
+  pinMode(IN3,OUTPUT);
+  pinMode(IN4,OUTPUT);
+
+  pinMode(ENA,OUTPUT);
+  pinMode(ENB,OUTPUT);
+
+  pinMode(TRIG,OUTPUT);
+  pinMode(ECHO,INPUT);
+
+  pinMode(BTN_LEFT,INPUT_PULLUP);
+  pinMode(BTN_RIGHT,INPUT_PULLUP);
+  pinMode(BTN_EMERGENCY,INPUT_PULLUP);
+
+  Serial.begin(9600);
+
+  lcd.init();
+  lcd.backlight();
+
+  lcd.setCursor(0,0);
+  lcd.print("TX VEHICLE");
+
+  lcd.setCursor(0,1);
+  lcd.print("VLC READY");
+
+  delay(1500);
+  lcd.clear();
+
+  // Motor forward direction
+  digitalWrite(IN1,HIGH);
+  digitalWrite(IN2,LOW);
+  digitalWrite(IN3,HIGH);
+  digitalWrite(IN4,LOW);
+}
+
+// ================= LOOP =================
+void loop() {
+
+  // ---------- READ AI COMMAND ----------
+  if(Serial.available()) {
+
+    char incoming = Serial.read();
+
+    if(incoming=='S' || incoming=='W' || incoming=='E' || incoming=='L' || incoming=='R') {
+      aiCommand = incoming;
+    }
+
+    while(Serial.available()) Serial.read(); // clear buffer
+  }
+
+  // ---------- READ ULTRASONIC ----------
+  distance = readUltrasonic();
+
+  // ---------- DEFAULT LOGIC ----------
+  if(distance > 60) {
+    motorSpeed = 200;
+    txMsg = 'S';
+  }
+  else if(distance > 30) {
+    motorSpeed = 120;
+    txMsg = 'W';
+  }
+  else {
+    motorSpeed = 0;
+    txMsg = 'E';
+  }
+
+  // ---------- AI OVERRIDE ----------
+  if(aiCommand != 0) {
+
+    txMsg = aiCommand;
+
+    if(aiCommand=='S') motorSpeed = 200;
+    if(aiCommand=='W') motorSpeed = 120;
+    if(aiCommand=='E') motorSpeed = 0;
+  }
+
+  // ---------- BUTTON OVERRIDE ----------
+  if(digitalRead(BTN_LEFT)==LOW) {
+    txMsg = 'L';
+  }
+
+  if(digitalRead(BTN_RIGHT)==LOW) {
+    txMsg = 'R';
+  }
+
+  if(digitalRead(BTN_EMERGENCY)==LOW) {
+    txMsg = 'E';
+    motorSpeed = 0;
+  }
+
+  // ---------- MOTOR CONTROL ----------
+  analogWrite(ENA,motorSpeed);
+  analogWrite(ENB,motorSpeed);
+
+  // ---------- VLC TRANSMIT ----------
+  sendVLC(txMsg);
+
+  // ---------- LCD ----------
+  updateLCD(distance,motorSpeed,txMsg);
+
+  // ---------- DEBUG ----------
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.print(" | Sent: ");
+  Serial.println(txMsg);
+
+  delay(120);
+}
+
+// ================= ULTRASONIC =================
+int readUltrasonic() {
+
+  digitalWrite(TRIG,LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG,HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG,LOW);
+
+  duration = pulseIn(ECHO,HIGH,25000);
+
+  if(duration==0) return 100;
+
+  return duration*0.034/2;
+}
+
+// ================= VLC SEND =================
+void sendVLC(char data) {
+
+  // START BIT
+  digitalWrite(LASER_PIN,HIGH);
+  delay(BIT_DELAY*2);
+
+  // DATA BITS
+  for(int i=0;i<8;i++) {
+    digitalWrite(LASER_PIN,(data>>i)&1);
+    delay(BIT_DELAY);
+  }
+
+  // STOP BIT
+  digitalWrite(LASER_PIN,LOW);
+  delay(BIT_DELAY*2);
+}
+
+// ================= LCD =================
+void updateLCD(int dist,int speedVal,char state) {
+
+  lcd.setCursor(0,0);
+  lcd.print("D:");
+  lcd.print(dist);
+  lcd.print("cm ");
+
+  lcd.print("SPD:");
+  lcd.print(map(speedVal,0,255,0,100));
+  lcd.print("% ");
+
+  lcd.setCursor(0,1);
+  lcd.print("STATE:");
+
+  if(state=='S') lcd.print("SAFE     ");
+  else if(state=='W') lcd.print("WARNING  ");
+  else if(state=='L') lcd.print("LEFT     ");
+  else if(state=='R') lcd.print("RIGHT    ");
+  else if(state=='E') lcd.print("EMERGENCY");
+}
